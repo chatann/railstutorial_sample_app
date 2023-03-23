@@ -1,73 +1,96 @@
 require "test_helper"
 
-class UsersSignup < ActionDispatch::IntegrationTest
+class UsersLogin < ActionDispatch::IntegrationTest
 
   def setup
-    ActionMailer::Base.deliveries.clear
+    @user = users(:michael)
   end
 end
 
-class UsersSignupTest < UsersSignup
+class InvalidPasswordTest < UsersLogin
 
-  test "invalid signup information" do
-    assert_no_difference 'User.count' do
-      post users_path, params: { user: { name:  "",
-                                         email: "user@invalid",
-                                         password:              "foo",
-                                         password_confirmation: "bar" } }
-    end
-    assert_response :unprocessable_entity
-    assert_template 'users/new'
-    assert_select 'div#error_explanation'
-    assert_select 'div.field_with_errors'
+  test "login path" do
+    get login_path
+    assert_template 'sessions/new'
   end
 
-  test "valid signup information with account activation" do
-    assert_difference 'User.count', 1 do
-      post users_path, params: { user: { name:  "Example User",
-                                         email: "user@example.com",
-                                         password:              "password",
-                                         password_confirmation: "password" } }
-    end
-    assert_equal 1, ActionMailer::Base.deliveries.size
+  test "login with valid email/invalid password" do
+    post login_path, params: { session: { email:    @user.email,
+                                          password: "invalid" } }
+    assert_not is_logged_in?
+    assert_template 'sessions/new'
+    assert_not flash.empty?
+    get root_path
+    assert flash.empty?
   end
 end
 
-class AccountActivationTest < UsersSignup
+class ValidLogin < UsersLogin
 
   def setup
     super
-    post users_path, params: { user: { name:  "Example User",
-                                       email: "user@example.com",
-                                       password:              "password",
-                                       password_confirmation: "password" } }
-    @user = assigns(:user)
+    post login_path, params: { session: { email:    @user.email,
+                                          password: 'password' } }
+  end
+end
+
+class ValidLoginTest < ValidLogin
+
+  test "valid login" do
+    assert is_logged_in?
+    assert_redirected_to @user
   end
 
-  test "should not be activated" do
-    assert_not @user.activated?
-  end
-
-  test "should not be able to log in before account activation" do
-    log_in_as(@user)
-    assert_not is_logged_in?
-  end
-
-  test "should not be able to log in with invalid activation token" do
-    get edit_account_activation_path("invalid token", email: @user.email)
-    assert_not is_logged_in?
-  end
-
-  test "should not be able to log in with invalid email" do
-    get edit_account_activation_path(@user.activation_token, email: 'wrong')
-    assert_not is_logged_in?
-  end
-
-  test "should log in successfully with valid activation token and email" do
-    get edit_account_activation_path(@user.activation_token, email: @user.email)
-    assert @user.reload.activated?
+  test "redirect after login" do
     follow_redirect!
     assert_template 'users/show'
-    assert is_logged_in?
+    assert_select "a[href=?]", login_path, count: 0
+    assert_select "a[href=?]", logout_path
+    assert_select "a[href=?]", user_path(@user)
+  end
+end
+
+class Logout < ValidLogin
+
+  def setup
+    super
+    delete logout_path
+  end
+end
+
+class LogoutTest < Logout
+
+  test "successful logout" do
+    assert_not is_logged_in?
+    assert_response :see_other
+    assert_redirected_to root_url
+  end
+
+  test "redirect after logout" do
+    follow_redirect!
+    assert_select "a[href=?]", login_path
+    assert_select "a[href=?]", logout_path,      count: 0
+    assert_select "a[href=?]", user_path(@user), count: 0
+  end
+
+  test "should still work after logout in second window" do
+    delete logout_path
+    assert_redirected_to root_url
+  end
+end
+
+class RememberingTest < UsersLogin
+
+  test "login with remembering" do
+    log_in_as(@user, remember_me: '1')
+    assert_not cookies[:remember_token].blank?
+  end
+
+  test "login without remembering" do
+    # Cookieを保存してログイン
+    log_in_as(@user, remember_me: '1')
+    # Cookieが削除されていることを検証してからログイン
+    log_in_as(@user, remember_me: '0')
+    assert cookies[:remember_token].blank?
   end
 end
